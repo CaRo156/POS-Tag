@@ -160,19 +160,6 @@ class HMM(object):
                 else:
                     self.B[w] = {k: 0 for k in self.tags}
                     self.B[w][t] = 1
-        '''
-        tmp = []
-        for s in sentences:
-            w = s.strip().split(' ')[0]
-            word_lc = w.lower()
-            if word_lc in tmp:
-                continue
-            if word_lc in self.B.keys():
-                for t in self.B[word_lc].keys():
-                    self.B[word_lc][t] += self.B[w][t]
-                del self.B[w]
-                tmp.append(word_lc)
-        '''
 
         for dict in self.B.values():
             #total = sum(dict.values())
@@ -285,7 +272,6 @@ class HMM(object):
         for k in range(N - 2, 0, -1):
             y[k] = bp[k + 2, y[k + 1], y[k + 2]]
         y[0] = '*'
-        #scores = [V[i, y[i - 1], y[i]] for i in range(1, N)]
         return y[1:]
 
     def accuracy_score(self, y_true, y_predict):
@@ -345,25 +331,27 @@ class HMM(object):
         print ('Unknown words: ', total_unknown_word)
         print ('Unknown words tag accuracy: ', unknown_word_acc)
         for tag in self.tags:
-            if tag == ',' or tag == ':' or tag == '$':
+            if tag == ',' or tag == ':' or tag == '$' or tag.find('|') > 0:
                 continue
-            print (tag + ' :')
             f1_tags[tag] = {}
             try:
                 pr = self.precision(y, y_p, tag)
-                rc = self.recall(y, y_p, tag)
-                f1 = self.f1_score(pr, rc)
-                print ('Precision: ', pr)
-                print ('Recall: ', rc)
-                print ('F1-score: ', f1)
-                f1_tags[tag]['P'] = pr
-                f1_tags[tag]['R'] = rc
-                f1_tags[tag]['F'] = f1
             except ZeroDivisionError:
-                pass
+                pr = 0
+            try:
+                rc = self.recall(y, y_p, tag)
+            except ZeroDivisionError:
+                rc = 0
+            try:
+                f1 = self.f1_score(pr, rc)
+            except ZeroDivisionError:
+                f1 = 0
+            f1_tags[tag]['P'] = pr
+            f1_tags[tag]['R'] = rc
+            f1_tags[tag]['F'] = f1
 
         if not log:
-            return accuracy, known_word_acc, unknown_word_acc
+            return accuracy, known_word_acc, unknown_word_acc, f1_tags
         with open(LOG_DIR + 'log.txt', 'w') as f:
             for x, p, t in zip(X_test, predict_sentences_tag, Y_test):
                 words = x.split(' ')
@@ -380,21 +368,30 @@ class HMM(object):
                 f.write('\n-------------------------------------------------\n')
         return accuracy, known_word_acc, unknown_word_acc, f1_tags
 
-def cross_validate(tests=10):
+def cross_validate(tests=10, test_size=0.1):
     t0 = time.time()
     acc = 0
     kw_acc = 0
     unk_acc = 0
+    f1_all_tests = {}
     print('Number of tests: ', tests)
     for i in range(tests):
         print('--------- [TEST %d] ---------' % (i + 1))
-        X_train, Y_train, X_test, Y_test = get_train_test_data(split=0.1)
+        X_train, Y_train, X_test, Y_test = get_train_test_data(test_size)
         hmm = HMM()
         hmm.train(X_train, Y_train)
-        a, k, u, f1_tags = hmm.test(X_test, Y_test, log=False)
+        a, k, u, f1 = hmm.test(X_test, Y_test, log=False)
         acc += a
         kw_acc += k
         unk_acc += u
+        if i == 0:
+            f1_all_tests = f1
+        else:
+            for tag in f1_all_tests.keys():
+                for s in f1_all_tests[tag].keys():
+                    if s not in f1[tag]:
+                        f1[tag][s] = 0
+                    f1_all_tests[tag][s] += f1[tag][s]
     acc = round(acc / tests, 4)
     kw_acc = round(kw_acc / tests, 4)
     unk_acc = round(unk_acc / tests, 4)
@@ -402,8 +399,14 @@ def cross_validate(tests=10):
     print('Accuracy score: ', acc)
     print('Known word tag accuracy: ', kw_acc)
     print('Unknown word tag accuracy: ', unk_acc)
+    print ('F1-Score: ')
+    for tag in f1_all_tests.keys():
+        print ('Tag: ', tag)
+        print ('Precision: ', round(f1_all_tests[tag]['P'] / tests, 3))
+        print('Recall: ', round(f1_all_tests[tag]['R'] / tests, 3))
+        print('F1: ', round(f1_all_tests[tag]['F'] / tests, 3))
+
     print('Time: ', time.time() - t0)
 
 if __name__ == '__main__':
-    #hmm = HMM()
-    cross_validate(tests=1)
+    cross_validate(tests=10, test_size=0.01)
